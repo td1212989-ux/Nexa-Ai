@@ -14,45 +14,57 @@ SYSTEM_PROMPT = (
 # Render ke Environment Variables se token uthana
 HF_TOKEN = os.getenv("HF_TOKEN", "")
 
-def respond(
-    message,
-    history: list[dict[str, str]],
-    system_message,
-    max_tokens,
-    temperature,
-    top_p,
-):
-    # Llama 3.1 Model ka use Render ke backend se free chalane ke liye
+# 1. Core logic jo LLM se reply lati hai
+def get_ai_response(message, history_list):
     client = InferenceClient(token=HF_TOKEN if HF_TOKEN else None, model="meta-llama/Meta-Llama-3.1-8B-Instruct")
+    
+    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+    
+    # Gradio messages format list[dict] ya string list ho sakta hai, use safely read karna
+    for chat in history_list:
+        if isinstance(chat, dict):
+            messages.append(chat)
+        elif isinstance(chat, (list, tuple)) and len(chat) == 2:
+            messages.append({"role": "user", "content": chat[0]})
+            messages.append({"role": "assistant", "content": chat[1]})
+            
+    messages.append({"role": "user", "content": message})
 
+    response = ""
+    try:
+        # Non-streaming call direct short/clean response ke liye
+        completion = client.chat_completion(
+            messages,
+            max_tokens=512,
+            stream=False,
+            temperature=0.7,
+            top_p=0.95,
+        )
+        response = completion.choices[0].message.content
+    except Exception as e:
+        response = f"Nexa AI Error: {str(e)}"
+    
+    return response
+
+# 2. Gradio Web UI ke liye streaming generator
+def respond(message, history, system_message, max_tokens, temperature, top_p):
+    client = InferenceClient(token=HF_TOKEN if HF_TOKEN else None, model="meta-llama/Meta-Llama-3.1-8B-Instruct")
     messages = [{"role": "system", "content": system_message}]
     messages.extend(history)
     messages.append({"role": "user", "content": message})
 
     response = ""
-
     for chunk in client.chat_completion(
-        messages,
-        max_tokens=max_tokens,
-        stream=True,
-        temperature=temperature,
-        top_p=top_p,
+        messages, max_tokens=max_tokens, stream=True, temperature=temperature, top_p=top_p
     ):
         choices = chunk.choices
-        token = ""
         if len(choices) and choices[0].delta.content:
-            token = choices[0].delta.content
+            response += choices[0].delta.content
+            yield response
 
-        response += token
-        yield response
-
-# Custom Dark CSS Identity for Nexa Logo (Matching 15111.png)
+# Custom Dark CSS
 custom_css = """
-body, .gradio-container {
-    background-color: #0d0e12 !important;
-    font-family: 'Inter', sans-serif;
-    color: white !important;
-}
+body, .gradio-container { background-color: #0d0e12 !important; font-family: 'Inter', sans-serif; color: white !important; }
 #header-container { text-align: center; padding: 25px 0; }
 #logo-text { font-size: 50px; font-weight: 800; color: #ffffff; letter-spacing: -1.5px; margin: 0; display: inline-block; }
 #logo-dot { color: #00dfb2; display: inline-block; animation: pulse 1.5s infinite; }
@@ -62,26 +74,14 @@ body, .gradio-container {
 """
 
 with gr.Blocks(css=custom_css) as demo:
-    # Nexa Header Design
     with gr.Row(elem_id="header-container"):
-        gr.HTML(
-            """
-            <div>
-                <h1 id="logo-text">nexa<span id="logo-dot">.</span> AI</h1>
-                <p style="color: #71717a; margin-top: 5px;">Next-Gen Intelligent Assistant</p>
-            </div>
-            """
-        )
+        gr.HTML("<div><h1 id='logo-text'>nexa<span id='logo-dot'>.</span> AI</h1><p style='color: #71717a; margin-top: 5px;'>Next-Gen Intelligent Assistant</p></div>")
 
-    # ChatInterface Setup
+    # Web Chat UI
     chatbot = gr.ChatInterface(
         respond,
         type="messages",
-        textbox=gr.Textbox(
-            placeholder="Nexa AI se kuch bhi puchiye (e.g., Agra kahan hai?)...", 
-            container=False, 
-            scale=7
-        ),
+        textbox=gr.Textbox(placeholder="Nexa AI se kuch bhi puchiye...", container=False, scale=7),
         additional_inputs=[
             gr.Textbox(value=SYSTEM_PROMPT, label="System message", visible=False),
             gr.Slider(minimum=1, maximum=2048, value=512, step=1, label="Max new tokens"),
@@ -90,16 +90,22 @@ with gr.Blocks(css=custom_css) as demo:
         ],
     )
     
-    # Custom Brand Footer Credits
-    gr.HTML(
-        """
-        <div id='footer-text'>
-            Created by <a href='#' target='_blank'>BharatCloudTechnologies</a> &amp; CEO and co-founder <b>Mr. Anik Kesarwani</b>
-        </div>
-        """
+    # --- FLUTTER DEDICATED API ENDPOINT ---
+    # Yeh hidden state functions background mein Flutter ke liye direct clean endpoint kholenge
+    user_msg_input = gr.Textbox(visible=False)
+    history_input = gr.State(value=[])
+    api_output = gr.Textbox(visible=False)
+    
+    api_btn = gr.Button("API", visible=False)
+    api_btn.click(
+        fn=get_ai_response, 
+        inputs=[user_msg_input, history_input], 
+        outputs=api_output, 
+        api_name="chat" # <--- Yeh generate karega aapka final endpoint URL
     )
+    
+    gr.HTML("<div id='footer-text'>Created by <a href='#' target='_blank'>BharatCloudTechnologies</a> &amp; CEO and co-founder <b>Mr. Anik Kesarwani</b></div>")
 
 if __name__ == "__main__":
-    # Render automatic web port assign karta hai, isliye port read karna zaroori hai
     port = int(os.environ.get("PORT", 7860))
     demo.launch(server_name="0.0.0.0", server_port=port)
