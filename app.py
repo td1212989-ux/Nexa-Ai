@@ -18,12 +18,12 @@ SYSTEM_PROMPT = (
 # Render Environment Variable se HuggingFace token uthana
 HF_TOKEN = os.getenv("HF_TOKEN", "")
 
-# meta-llama/Meta-Llama-3.1-8B-Instruct is a GATED model on Hugging Face.
-# HF_TOKEN must belong to an account that has been granted access on the
-# model's page (huggingface.co/meta-llama/Meta-Llama-3.1-8B-Instruct ->
-# "Request access" / "You have been granted access to this model").
-# Without that, every call fails with an auth error even if HF_TOKEN is set.
-MODEL_ID = os.getenv("MODEL_ID", "meta-llama/Meta-Llama-3.1-8B-Instruct")
+# NOTE: "meta-llama/Meta-Llama-3.1-8B-Instruct" was gated and not
+# available on the current Inference Providers router. Using
+# Qwen/Qwen2.5-7B-Instruct instead — lightweight, free, and reliably
+# available. You can override this anytime via the MODEL_ID environment
+# variable on Render without touching this file.
+MODEL_ID = os.getenv("MODEL_ID", "Qwen/Qwen2.5-7B-Instruct")
 
 
 #---------------------------------------------------------------------
