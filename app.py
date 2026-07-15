@@ -60,8 +60,8 @@ def call_model(message: str, history: Optional[List[List[str]]] = None) -> str:
 # Gradio UI — kept only for manual testing in the browser at /ui.
 # The Flutter app should call the /chat REST endpoint instead.
 #---------------------------------------------------------------------
-def respond(message, history):
-    return call_model(message, history)
+def respond(message):
+    return call_model(message, None)
 
 
 custom_css = """
@@ -74,10 +74,7 @@ body, .gradio-container {
 
 gradio_app = gr.Interface(
     fn=respond,
-    inputs=[
-        gr.Textbox(placeholder="Nexa AI se kuch bhi puchiye...", label="Message"),
-        gr.State(value=[]),
-    ],
+    inputs=gr.Textbox(placeholder="Nexa AI se kuch bhi puchiye...", label="Message"),
     outputs=gr.Textbox(label="Nexa. AI Response"),
     title="nexa. AI",
     description="Next-Gen Intelligent Assistant by BharatCloudTechnologies",
