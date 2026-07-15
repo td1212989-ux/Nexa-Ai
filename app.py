@@ -1,10 +1,10 @@
 import gradio as gr
 import os
+import requests
 from typing import List, Optional
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from huggingface_hub import InferenceClient
 
 # Nexa AI Branding & System Rules
 SYSTEM_PROMPT = (
@@ -30,10 +30,20 @@ MODEL_ID = os.getenv("MODEL_ID", "meta-llama/Meta-Llama-3.1-8B-Instruct")
 # Core model call — shared by the Gradio UI, the REST API, and the
 # browser-testable GET route below, so there's only one place that
 # talks to Hugging Face.
+#
+# NOTE: this calls the new HF "Inference Providers" router directly via
+# requests, instead of huggingface_hub's InferenceClient. The old
+# api-inference.huggingface.co endpoint that InferenceClient used to
+# default to has been decommissioned (that's the DNS/MaxRetryError you
+# were seeing) — router.huggingface.co is the current one, and it uses
+# a plain OpenAI-compatible /v1/chat/completions schema, so a simple
+# requests.post is actually simpler and more future-proof than pulling
+# in the client library for it.
 #---------------------------------------------------------------------
-def call_model(message: str, history: Optional[List[List[str]]] = None) -> str:
-    client = InferenceClient(token=HF_TOKEN if HF_TOKEN else None, model=MODEL_ID)
+HF_ROUTER_URL = "https://router.huggingface.co/v1/chat/completions"
 
+
+def call_model(message: str, history: Optional[List[List[str]]] = None) -> str:
     formatted_messages = [{"role": "system", "content": SYSTEM_PROMPT}]
 
     if history:
@@ -43,15 +53,26 @@ def call_model(message: str, history: Optional[List[List[str]]] = None) -> str:
 
     formatted_messages.append({"role": "user", "content": message})
 
+    headers = {
+        "Authorization": f"Bearer {HF_TOKEN}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "model": MODEL_ID,
+        "messages": formatted_messages,
+        "max_tokens": 512,
+        "temperature": 0.7,
+        "top_p": 0.95,
+        "stream": False,
+    }
+
     try:
-        completion = client.chat_completion(
-            formatted_messages,
-            max_tokens=512,
-            stream=False,
-            temperature=0.7,
-            top_p=0.95,
-        )
-        return completion.choices[0].message.content
+        resp = requests.post(HF_ROUTER_URL, headers=headers, json=payload, timeout=60)
+        resp.raise_for_status()
+        data = resp.json()
+        return data["choices"][0]["message"]["content"]
+    except requests.exceptions.HTTPError:
+        return f"Nexa AI Error: HTTP {resp.status_code} — {resp.text[:300]}"
     except Exception as e:
         return f"Nexa AI Error: {str(e)}"
 
