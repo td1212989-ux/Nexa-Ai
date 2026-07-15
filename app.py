@@ -1,5 +1,6 @@
 import gradio as gr
 import os
+import traceback
 from huggingface_hub import InferenceClient
 
 # Nexa AI Branding & Rules
@@ -14,53 +15,81 @@ SYSTEM_PROMPT = (
 # Render ke Environment Variables se token uthana
 HF_TOKEN = os.getenv("HF_TOKEN", "")
 
-# 1. Core logic jo LLM se reply lati hai
-def get_ai_response(message, history_list):
-    client = InferenceClient(token=HF_TOKEN if HF_TOKEN else None, model="meta-llama/Meta-Llama-3.1-8B-Instruct")
-    
-    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
-    
-    # Gradio messages format list[dict] ya string list ho sakta hai, use safely read karna
-    for chat in history_list:
-        if isinstance(chat, dict):
-            messages.append(chat)
-        elif isinstance(chat, (list, tuple)) and len(chat) == 2:
-            messages.append({"role": "user", "content": chat[0]})
-            messages.append({"role": "assistant", "content": chat[1]})
-            
-    messages.append({"role": "user", "content": message})
+# Model jo hum use kar rahe hain
+MODEL_ID = "meta-llama/Meta-Llama-3.1-8B-Instruct"
 
-    response = ""
+
+# 1. Core logic jo LLM se reply lati hai (Flutter ke liye hidden API endpoint)
+def get_ai_response(message, history_list):
     try:
-        # Non-streaming call direct short/clean response ke liye
+        # FIX: client creation ab try ke andar hai, aur provider explicitly
+        # set kiya gaya hai — naye huggingface_hub versions me provider
+        # specify na karne par client init ya call fail ho sakta hai,
+        # jo pehle uncaught exception ban ke Gradio "event: error" deta tha.
+        client = InferenceClient(
+            provider="hf-inference",
+            token=HF_TOKEN if HF_TOKEN else None,
+        )
+
+        messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+
+        # Gradio messages format list[dict] ya string list ho sakta hai, use safely read karna
+        for chat in history_list:
+            if isinstance(chat, dict):
+                messages.append(chat)
+            elif isinstance(chat, (list, tuple)) and len(chat) == 2:
+                messages.append({"role": "user", "content": chat[0]})
+                messages.append({"role": "assistant", "content": chat[1]})
+
+        messages.append({"role": "user", "content": message})
+
         completion = client.chat_completion(
             messages,
+            model=MODEL_ID,
             max_tokens=512,
             stream=False,
             temperature=0.7,
             top_p=0.95,
         )
-        response = completion.choices[0].message.content
+        return completion.choices[0].message.content
+
     except Exception as e:
-        response = f"Nexa AI Error: {str(e)}"
-    
-    return response
+        # FIX: Render logs me poora traceback print hoga, isse exact
+        # error line/reason dikhega jab bhi request fail ho.
+        print("=== NEXA AI ERROR (get_ai_response) ===")
+        traceback.print_exc()
+        return f"Nexa AI Error: {str(e)}"
+
 
 # 2. Gradio Web UI ke liye streaming generator
 def respond(message, history, system_message, max_tokens, temperature, top_p):
-    client = InferenceClient(token=HF_TOKEN if HF_TOKEN else None, model="meta-llama/Meta-Llama-3.1-8B-Instruct")
-    messages = [{"role": "system", "content": system_message}]
-    messages.extend(history)
-    messages.append({"role": "user", "content": message})
+    try:
+        client = InferenceClient(
+            provider="hf-inference",
+            token=HF_TOKEN if HF_TOKEN else None,
+        )
+        messages = [{"role": "system", "content": system_message}]
+        messages.extend(history)
+        messages.append({"role": "user", "content": message})
 
-    response = ""
-    for chunk in client.chat_completion(
-        messages, max_tokens=max_tokens, stream=True, temperature=temperature, top_p=top_p
-    ):
-        choices = chunk.choices
-        if len(choices) and choices[0].delta.content:
-            response += choices[0].delta.content
-            yield response
+        response = ""
+        for chunk in client.chat_completion(
+            messages,
+            model=MODEL_ID,
+            max_tokens=max_tokens,
+            stream=True,
+            temperature=temperature,
+            top_p=top_p,
+        ):
+            choices = chunk.choices
+            if len(choices) and choices[0].delta.content:
+                response += choices[0].delta.content
+                yield response
+    except Exception as e:
+        print("=== NEXA AI ERROR (respond) ===")
+        traceback.print_exc()
+        yield f"Nexa AI Error: {str(e)}"
+
 
 # Custom Dark CSS
 custom_css = """
@@ -89,21 +118,21 @@ with gr.Blocks(css=custom_css) as demo:
             gr.Slider(minimum=0.1, maximum=1.0, value=0.95, step=0.05, label="Top-p"),
         ],
     )
-    
+
     # --- FLUTTER DEDICATED API ENDPOINT ---
     # Yeh hidden state functions background mein Flutter ke liye direct clean endpoint kholenge
     user_msg_input = gr.Textbox(visible=False)
     history_input = gr.State(value=[])
     api_output = gr.Textbox(visible=False)
-    
+
     api_btn = gr.Button("API", visible=False)
     api_btn.click(
-        fn=get_ai_response, 
-        inputs=[user_msg_input, history_input], 
-        outputs=api_output, 
-        api_name="chat" # <--- Yeh generate karega aapka final endpoint URL
+        fn=get_ai_response,
+        inputs=[user_msg_input, history_input],
+        outputs=api_output,
+        api_name="chat"  # <--- Yeh generate karega aapka final endpoint URL
     )
-    
+
     gr.HTML("<div id='footer-text'>Created by <a href='#' target='_blank'>BharatCloudTechnologies</a> &amp; CEO and co-founder <b>Mr. Anik Kesarwani</b></div>")
 
 if __name__ == "__main__":
